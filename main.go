@@ -2,12 +2,64 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	_ "github.com/go-sql-driver/mysql"
 	migrationsfiles "github.com/jhamiltonjunior/migration-golang/migrations-files"
+	"reflect"
+	"strings"
 )
 
+type User struct {
+	ID    string `db:"id INT NOT NULL AUTO_INCREMENT PRIMARY KEY"`
+	Name  string `db:"name VARCHAR(255) NOT NULL"`
+	Email string `db:"email VARCHAR(255) NOT NULL"`
+}
+
+func getStructAndReturnQuery(s interface{}) (string, string) {
+	val := reflect.ValueOf(s)
+	typ := reflect.TypeOf(s)
+
+	dbName := strings.ToLower(typ.Name())
+	var querySlice []string
+
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+
+		querySlice = append(querySlice, field.Tag.Get("db"))
+	}
+
+	query := strings.Join(querySlice, ", ")
+
+	up := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %ss (%s);
+	`, dbName, query)
+	down := fmt.Sprintf("DROP TABLE IF EXISTS %ss", dbName)
+
+	return up, down
+}
+
 func main() {
-	NewMigrationConnection()
+	user := User{}
+	up, down := getStructAndReturnQuery(user)
+
+	NewMigrationWithStruct("up", "create_user_table", up)
+	NewMigrationWithStruct("down", "drop_user_table", down)
+	NewMigrationWithStruct("up", "create_again_user_table", up)
+
+	//NewMigrationConnection()
+}
+
+func NewMigrationWithStruct(direction, identifier, query string) {
+	migrationConnection := &MigrationConnection{}
+	migrationConnection.Connect()
+	migrationConnection.Migrate()
+
+	if migrationConnection.HasMigration(identifier) {
+		return
+	}
+
+	migrationConnection.OnlyExec(query)
+	migrationConnection.CreateMigration(identifier)
 }
 
 func NewMigrationConnection() *MigrationConnection {
@@ -139,6 +191,13 @@ func (m *MigrationConnection) Rollback(query string) {
 }
 
 func (m *MigrationConnection) Commit(query string) {
+	_, err := m.conn.Exec(query)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (m *MigrationConnection) OnlyExec(query string) {
 	_, err := m.conn.Exec(query)
 	if err != nil {
 		panic(err)
